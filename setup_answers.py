@@ -26,11 +26,11 @@ def check_day18_files() -> bool:
     ]
     missing = [f for f in required if not os.path.exists(f)]
     if missing:
-        print("\n❌ Thiếu files từ Day 18. Copy chúng vào src/ trước:\n")
+        print("\n[Error] Thieu files tu Day 18. Copy chung vao src/ truoc:\n")
         for f in missing:
             print(f"   cp <Day18>/src/{os.path.basename(f)} src/")
         return False
-    print(f"✓ Day 18 source files: {len(required)}/{len(required)} found")
+    print(f"[OK] Day 18 source files: {len(required)}/{len(required)} found")
     return True
 
 
@@ -40,8 +40,14 @@ def build_pipeline():
     from src.m3_rerank import CrossEncoderReranker
     from src.m5_enrichment import enrich_chunks
     from config import RERANK_TOP_K
+    import gc
 
-    print("\n[1/3] Chunking + enriching documents...")
+    print("\n[0/3] Pre-loading search engine and embedding model...", flush=True)
+    search = HybridSearch()
+    search.dense._get_encoder()  # Load model early to prevent memory fragmentation / OOM
+    print("  ✓ Embedding model pre-loaded successfully!", flush=True)
+
+    print("\n[1/3] Chunking + enriching documents...", flush=True)
     t0 = time.time()
     docs = load_documents()
     all_chunks = []
@@ -56,39 +62,41 @@ def build_pipeline():
     enriched = enrich_chunks(all_chunks)
     if enriched:
         all_chunks = [{"text": e.enriched_text, "metadata": e.auto_metadata} for e in enriched]
-        print(f"  ✓ Enriched {len(enriched)} chunks ({time.time()-t0:.1f}s)")
+        print(f"  ✓ Enriched {len(enriched)} chunks ({time.time()-t0:.1f}s)", flush=True)
     else:
-        print(f"  ✓ Using {len(all_chunks)} raw chunks (M5 not implemented or no API key)")
+        print(f"  ✓ Using {len(all_chunks)} raw chunks (M5 not implemented or no API key)", flush=True)
 
-    print("\n[2/3] Indexing (BM25 + Dense)...")
+    print("\n[2/3] Indexing (BM25 + Dense)...", flush=True)
     t0 = time.time()
-    search = HybridSearch()
     search.index(all_chunks)
-    print(f"  ✓ Indexed {len(all_chunks)} chunks ({time.time()-t0:.1f}s)")
+    # Free temporary BM25 tokens list to reclaim memory
+    search.bm25.corpus_tokens = []
+    gc.collect()
+    print(f"  ✓ Indexed {len(all_chunks)} chunks ({time.time()-t0:.1f}s)", flush=True)
 
-    print("\n[3/3] Loading reranker...")
+    print("\n[3/3] Loading reranker...", flush=True)
     t0 = time.time()
     reranker = CrossEncoderReranker()
-    print(f"  ✓ Reranker ready ({time.time()-t0:.1f}s)")
+    print(f"  ✓ Reranker ready ({time.time()-t0:.1f}s)", flush=True)
 
     return search, reranker, RERANK_TOP_K
 
 
 def run_query(q: str, search, reranker, top_k: int) -> tuple[str, list[str]]:
-    from config import OPENAI_API_KEY
+    from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 
     results = search.search(q)
     docs    = [{"text": r.text, "score": r.score, "metadata": r.metadata} for r in results]
     reranked = reranker.rerank(q, docs, top_k=top_k)
     contexts = [r.text for r in reranked] if reranked else [r.text for r in results[:3]]
 
-    if OPENAI_API_KEY and contexts:
+    if LLM_API_KEY and contexts:
         try:
             from openai import OpenAI
-            client = OpenAI()
+            client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL) if LLM_BASE_URL else OpenAI()
             ctx = "\n\n".join(contexts)
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=LLM_MODEL,
                 messages=[
                     {"role": "system", "content": "Trả lời CHỈ dựa trên context. Nếu không có → nói 'Không tìm thấy.'"},
                     {"role": "user",   "content": f"Context:\n{ctx}\n\nCâu hỏi: {q}"},

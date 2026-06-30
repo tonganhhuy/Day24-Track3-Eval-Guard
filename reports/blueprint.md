@@ -1,7 +1,7 @@
 # CI/CD Blueprint: RAG Eval + Guardrail Stack
 
-**Sinh viên:** [Họ Tên]  
-**Ngày:** [Ngày làm lab]
+**Sinh viên:** Tống Anh Huy
+**Ngày:** 2026-06-30
 
 ---
 
@@ -10,17 +10,17 @@
 ```
 User Input
     │
-    ▼ (~?ms P95)
+    ▼ (~25.58ms P95)
 [Presidio PII Scan]
-    │ block if: VN_CCCD / VN_PHONE / EMAIL detected
+    │ block if: VN_CCCD / VN_PHONE / EMAIL_ADDRESS detected
     │ action:   return 400 + "PII detected in query"
-    ▼ (~?ms P95)
+    ▼ (~6.58ms P95)
 [NeMo Input Rail]
     │ block if: off-topic / jailbreak / prompt injection
     │ action:   return 503 + refuse message
     ▼
 [RAG Pipeline (Day 18)]
-    │ M1 Chunk → M2 Search → M3 Rerank → GPT-4o-mini
+    │ M1 Chunk → M2 Search → M3 Rerank → Gemini
     ▼
 [NeMo Output Rail]
     │ flag if:  PII in response / sensitive content
@@ -33,18 +33,18 @@ User Response
 
 ## Latency Budget
 
-*(Điền từ kết quả Task 12 — measure_p95_latency())*
+*(Kết quả từ Task 12 — measure_p95_latency())*
 
 | Layer | P50 (ms) | P95 (ms) | P99 (ms) | Budget |
 |---|---|---|---|---|
-| Presidio PII | ? | ? | ? | <10ms |
-| NeMo Input Rail | ? | ? | ? | <300ms |
-| RAG Pipeline | ? | ? | ? | <2000ms |
-| NeMo Output Rail | ? | ? | ? | <300ms |
-| **Total Guard** | ? | **?** | ? | **<500ms** |
+| Presidio PII | 21.00 | 25.58 | 25.58 | <10ms |
+| NeMo Input Rail | 3.87 | 6.58 | 6.58 | <300ms |
+| RAG Pipeline | N/A | N/A | N/A | <2000ms |
+| NeMo Output Rail | N/A | N/A | N/A | <300ms |
+| **Total Guard** | 23.44 | **31.19** | 31.19 | **<500ms** |
 
-**Budget OK?** [ ] Yes / [ ] No  
-**Comment:** [Nếu vượt budget, layer nào là bottleneck và cách tối ưu?]
+**Budget OK?** [x] Yes / [ ] No  
+**Comment:** Guard stack tổng P95 = 31.19ms, rất thoải mái so với budget 500ms. Presidio PII scan P95 (25.58ms) cao hơn budget mong muốn (<10ms) nhưng vẫn nằm trong ngưỡng chấp nhận được cho production. NeMo input rail cực kỳ nhanh (<7ms P95) nhờ sử dụng keyword pre-filter trước khi gọi semantic matching.
 
 ---
 
@@ -84,16 +84,19 @@ User Response
 
 | | Kết quả |
 |---|---|
-| RAGAS avg_score (50q) | ? |
-| Worst metric | ? |
-| Dominant failure distribution | ? |
-| Cohen's κ | ? |
-| Adversarial pass rate | ? / 20 |
-| Guard P95 latency | ? ms |
+| RAGAS avg_score (50q) | factual: 0.244, multi_hop: 0.145, adversarial: 0.198 |
+| Worst metric | answer_relevancy (0.0 trên cả 3 distributions) |
+| Dominant failure distribution | factual (14 failures ở faithfulness) |
+| Cohen's κ | 0.0 |
+| Adversarial pass rate | 20 / 20 |
+| Guard P95 latency | 31.19 ms |
 
 ---
 
 ## Nhận xét & Cải tiến
 
-> [Viết 3-5 câu về: điều gì hoạt động tốt, điều gì cần cải thiện,
->  nếu deploy production thực sự bạn sẽ thay đổi gì trong stack này?]
+> **Điều hoạt động tốt:** Guard stack (Presidio + NeMo + keyword pre-filter) đạt 20/20 adversarial pass rate với P95 latency cực thấp (31ms), cho thấy việc kết hợp nhiều tầng bảo vệ (defense-in-depth) rất hiệu quả. Presidio phát hiện chính xác PII tiếng Việt (CCCD, SĐT) nhờ custom PatternRecognizer.
+>
+> **Điều cần cải thiện:** RAGAS scores rất thấp — đặc biệt answer_relevancy = 0.0 và faithfulness trung bình chỉ đạt 0.24. Nguyên nhân chính là RAG pipeline chưa tối ưu cho tiếng Việt (embedding model BGE-M3 encode chậm trên CPU, context retrieval chưa chính xác). Cohen's κ = 0.0 cho thấy LLM Judge chưa đủ phân biệt giữa các câu trả lời.
+>
+> **Nếu deploy production:** (1) Sử dụng GPU để tăng tốc encoding BGE-M3 và reranking, (2) Fine-tune hoặc thay thế embedding model phù hợp hơn cho tiếng Việt, (3) Tăng cường prompt engineering cho LLM Judge để cải thiện Cohen's κ, (4) Thêm rate limiting và logging chi tiết cho guard stack, (5) Triển khai Qdrant server riêng (Docker) thay vì in-memory để dữ liệu persistent qua các lần restart.

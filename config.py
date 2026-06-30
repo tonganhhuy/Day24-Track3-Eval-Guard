@@ -7,12 +7,32 @@ load_dotenv()
 
 # --- API Keys ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 HF_TOKEN = os.getenv("HF_TOKEN", "")  # Optional: for HuggingFace models
+
+LLM_API_KEY = OPENAI_API_KEY or GEMINI_API_KEY or GOOGLE_API_KEY
+
+is_gemini = False
+if GEMINI_API_KEY or GOOGLE_API_KEY or (OPENAI_API_KEY and (OPENAI_API_KEY.startswith("AIzaSy") or OPENAI_API_KEY.startswith("AQ."))):
+    is_gemini = True
+    LLM_API_KEY = GEMINI_API_KEY or GOOGLE_API_KEY or OPENAI_API_KEY
+    LLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    LLM_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    
+    # Programmatic override of environment variables for external libraries (Ragas, NeMo, etc.)
+    os.environ["OPENAI_API_KEY"] = LLM_API_KEY
+    os.environ["OPENAI_API_BASE"] = LLM_BASE_URL
+    os.environ["OPENAI_BASE_URL"] = LLM_BASE_URL
+else:
+    LLM_BASE_URL = None
+    LLM_MODEL = "gpt-4o-mini"
 
 # --- Qdrant (same as Day 18) ---
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333
 COLLECTION_NAME = "lab24_production"
+NAIVE_COLLECTION = "lab24_naive"
 
 # --- Embedding (same as Day 18) ---
 EMBEDDING_MODEL = "BAAI/bge-m3"
@@ -38,7 +58,7 @@ ADVERSARIAL_SET_PATH = os.path.join(os.path.dirname(__file__), "adversarial_set_
 GUARDRAILS_CONFIG_DIR = os.path.join(os.path.dirname(__file__), "guardrails")
 
 # --- LLM Judge ---
-JUDGE_MODEL = "gpt-4o-mini"
+JUDGE_MODEL = LLM_MODEL
 
 # --- Guardrail latency budget ---
 LATENCY_BUDGET_P95_MS = 500  # target: full guard stack P95 < 500ms
